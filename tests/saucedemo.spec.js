@@ -16,7 +16,7 @@ await expect(page.getByRole('button',{name: 'Login'})).toBeVisible();
 });
 
 test('User can login', async({ page}) =>{
-const username = 'Standard_user';
+const username = 'standard_user';
 const password='secret_sauce';
 await page.goto('/');
 await page.getByPlaceholder('Username').fill(username);
