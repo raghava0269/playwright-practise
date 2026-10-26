@@ -1,0 +1,72 @@
+name: Playwright Tests
+
+# WHEN the pipeline runs
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # "Run workflow" button in the Actions tab
+    inputs:
+      grep:
+        description: 'Tag to run, e.g. @smoke (empty = all tests)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '30 2 * * *' # nightly at 02:30 UTC
+
+jobs:
+  test:
+    name: ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # MATRIX: one parallel job per Playwright project
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [api, ui-chromium, ui-firefox]
+
+    # .env values for CI. Real secrets go in: Repo -> Settings -> Secrets and variables -> Actions
+    env:
+      CI: true
+      UI_BASE_URL: https://www.saucedemo.com
+      API_BASE_URL: https://jsonplaceholder.typicode.com
+      STANDARD_USER: ${{ secrets.STANDARD_USER || 'standard_user' }}
+      PASSWORD: ${{ secrets.PASSWORD || 'secret_sauce' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: matrix.project != 'api'
+        # chromium is always needed: the 'setup' project (login) runs on it
+        run: npx playwright install --with-deps chromium ${{ matrix.project == 'ui-firefox' && 'firefox' || '' }}
+
+      - name: Run Playwright tests
+        run: npx playwright test --project=${{ matrix.project }} ${{ github.event.inputs.grep && format('--grep "{0}"', github.event.inputs.grep) || '' }}
+
+      # REPORTS: keep the HTML report + traces/videos even when tests fail
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-${{ matrix.project }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test results (traces, videos, junit)
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: test-results-${{ matrix.project }}
+          path: test-results/
+          retention-days: 14

@@ -1,81 +1,101 @@
 // @ts-check
 import { defineConfig, devices } from '@playwright/test';
+import dotenv from 'dotenv';
+import path from 'path';
+import { STORAGE_STATE } from './utils/constants';
 
 /**
- * Read environment variables from file.
- * https://github.com/motdotla/dotenv
+ * .env — load environment variables (URLs, credentials) from a .env file.
+ * Copy .env.example to .env and change values per environment.
+ * The `|| 'default'` fallbacks keep CI working even without a .env file.
  */
-// import dotenv from 'dotenv';
-// import path from 'path';
-// dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-/**
- * @see https://playwright.dev/docs/test-configuration
- */
 export default defineConfig({
   testDir: './tests',
-  /* Run tests in files in parallel */
+
+  /* Max time one test can run (incl. hooks & fixtures). */
+  timeout: 30_000,
+
+  /* Default timeout for every expect() auto-retrying assertion. */
+  expect: { timeout: 5_000 },
+
+  /* PARALLEL EXECUTION: run tests inside a file in parallel too (not only files). */
   fullyParallel: true,
+
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
-  /* Retry on CI only */
-  retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
-  /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-  reporter: 'html',
-  /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
-  use: {
-    /* Base URL to use in actions like `await page.goto('')`. */
-    baseURL: 'https://www.saucedemo.com',
 
-    /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
-    trace: 'on-first-retry',
-  },
+  /* RETRIES: re-run a failed test. Pass on retry => reported as "flaky". */
+  retries: process.env.CI ? 2 : 1,
 
-  /* Configure projects for major browsers */
-  projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
-    },
+  /* WORKERS: number of parallel OS processes. undefined = half your CPU cores. */
+  workers: process.env.CI ? 2 : undefined,
 
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
-
-    {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
-    },
-
-    /* Test against mobile viewports. */
-    // {
-    //   name: 'Mobile Chrome',
-    //   use: { ...devices['Pixel 5'] },
-    // },
-    // {
-    //   name: 'Mobile Safari',
-    //   use: { ...devices['iPhone 12'] },
-    // },
-
-    /* Test against branded browsers. */
-    // {
-    //   name: 'Microsoft Edge',
-    //   use: { ...devices['Desktop Edge'], channel: 'msedge' },
-    // },
-    // {
-    //   name: 'Google Chrome',
-    //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
-    // },
+  /* REPORTS: several reporters can run at once. */
+  reporter: [
+    ['list'],
+    ['html', { open: 'never', outputFolder: 'playwright-report' }],
+    ['json', { outputFile: 'test-results/results.json' }],
+    ['junit', { outputFile: 'test-results/junit.xml' }],
   ],
 
-  /* Run your local dev server before starting the tests */
-  // webServer: {
-  //   command: 'npm run start',
-  //   url: 'http://localhost:3000',
-  //   reuseExistingServer: !process.env.CI,
-  // },
-});
+  /* Shared settings for ALL projects (each project can override). */
+  use: {
+    /* TRACE: 'on' | 'off' | 'retain-on-failure' | 'on-first-retry'. Open with: npx playwright show-trace <zip> */
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
 
+    /* TEST IDs: page.getByTestId('x') will look for [data-test="x"] (saucedemo uses data-test). */
+    testIdAttribute: 'data-test',
+
+    actionTimeout: 10_000,
+    navigationTimeout: 20_000,
+  },
+
+  projects: [
+    /* 1. SETUP project: logs in once and saves cookies to STORAGE_STATE. */
+    {
+      name: 'setup',
+      testDir: './tests/setup',
+      testMatch: /.*\.setup\.js/,
+      use: { baseURL: process.env.UI_BASE_URL || 'https://www.saucedemo.com' },
+    },
+
+    /* 2. UI projects: depend on setup and reuse its logged-in storage state. */
+    {
+      name: 'ui-chromium',
+      testDir: './tests/ui',
+      dependencies: ['setup'],
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: process.env.UI_BASE_URL || 'https://www.saucedemo.com',
+        storageState: STORAGE_STATE,
+      },
+    },
+    {
+      name: 'ui-firefox',
+      testDir: './tests/ui',
+      dependencies: ['setup'],
+      grepInvert: /@chromium-only/, // TAGS: skip tests tagged @chromium-only on firefox
+      use: {
+        ...devices['Desktop Firefox'],
+        baseURL: process.env.UI_BASE_URL || 'https://www.saucedemo.com',
+        storageState: STORAGE_STATE,
+      },
+    },
+
+    /* 3. API project: no browser needed, only the `request` fixture. */
+    {
+      name: 'api',
+      testDir: './tests/api',
+      use: {
+        baseURL: process.env.API_BASE_URL || 'https://jsonplaceholder.typicode.com',
+        extraHTTPHeaders: {
+          Accept: 'application/json',
+        },
+      },
+    },
+  ],
+});
